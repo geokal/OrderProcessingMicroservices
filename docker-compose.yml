@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_DB: ordersdb
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    command: ["postgres", "-c", "wal_level=logical"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders -d ordersdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+
+  debezium:
+    image: debezium/connect:2.5
+    container_name: debezium
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+    depends_on:
+      - kafka
+      - postgres
+
+  debezium-init:
+    image: curlimages/curl:latest
+    container_name: debezium-init
+    volumes:
+      - ./debezium:/debezium
+    command: >
+      sh -c "
+        echo 'Waiting for Debezium to start...';
+        while [ $$(curl -s -o /dev/null -w '%{http_code}' http://debezium:8083/connectors) -ne 200 ]; do
+          sleep 3;
+        done;
+        echo 'Registering Debezium Postgres connector...';
+        curl -i -X POST -H 'Accept:application/json' -H 'Content-Type:application/json' http://debezium:8083/connectors/ -d @/debezium/connector.json;
+        echo 'Connector registration step finished.';
+      "
+    depends_on:
+      - debezium
+
+  order-service:
+    build:
+      context: .
+      dockerfile: src/OrderService/Dockerfile
+    container_name: order-service
+    ports:
+      - "5000:5000"
+    environment:
+      ConnectionStrings__OrdersDb: "Host=postgres;Port=5432;Database=ordersdb;Username=orders;Password=orders"
+      Kafka__BootstrapServers: "kafka:9092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: src/PaymentService/Dockerfile
+    container_name: payment-service
+    environment:
+      ConnectionStrings__OrdersDb: "Host=postgres;Port=5432;Database=ordersdb;Username=orders;Password=orders"
+      Kafka__BootstrapServers: "kafka:9092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: src/NotificationService/Dockerfile
+    container_name: notification-service
+    environment:
+      Kafka__BootstrapServers: "kafka:9092"
+    depends_on:
+      kafka:
+        condition: service_started
