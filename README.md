@@ -113,6 +113,19 @@ docker-compose up --build -d
 ```bash
 docker-compose down -v
 ```
+> Note: Use `-v` to remove persisted volumes. Without it, PostgreSQL data and Kafka offsets survive restarts.
+
+### Verify Rate Limiting
+```bash
+# Send rapid requests to trigger 429 responses
+for i in $(seq 1 120); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:5000/orders \
+    -H "Idempotency-Key: burst-test-$i" \
+    -H "Content-Type: application/json" \
+    -d '{"OrderId": "burst-'$i'", "Amount": 99.99}'
+done | sort | uniq -c
+```
+Expected: ~100 responses with `202`, remaining with `429`
 
 ### Check Service Health & Status
 
