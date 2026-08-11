@@ -35,6 +35,43 @@ A production-ready, resilient microservices system built with **.NET 10 (Minimal
 
 ---
 
+### Data Flow: From Model to Database Tables
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as OrderService
+    participant O as orders Table
+    participant OB as outbox Table
+    participant IK as idempotency_keys Table
+    participant D as Debezium CDC
+    participant K as Kafka
+
+    C->>A: POST /orders (Idempotency-Key: demo-key-01)
+    
+    rect rgb(20, 20, 40)
+        A->>IK: Check if key exists
+        alt Duplicate Request
+            IK-->>A: Key found
+            A-->>C: 202 Accepted + cached OrderId
+        end
+    end
+    
+    rect rgb(30, 20, 40)
+        alt New Request
+            A->>O: INSERT Order<br/>(Id, Amount, Status=PENDING)
+            A->>OB: INSERT OutboxRecord<br/>(Id, AggregateId, Event_type, Payload)
+            A->>IK: INSERT IdempotencyKeyRecord<br/>(Key, OrderId, CreatedAt)
+            Note right of A: All inserts in ONE<br/>database transaction
+        end
+    end
+    
+    rect rgb(20, 30, 40)
+        D->>OB: Watch for INSERTS
+        D->>K: PUBLISH order.created event
+    end
+```
+
 ## 2. Solution Structure
 
 ```
