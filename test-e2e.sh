@@ -31,14 +31,14 @@ curl -i -X POST "$BASE_URL/orders" \
   -d '{"OrderId": "retry-pass-2", "Amount": 150.00}'
 
 echo ""
-echo "4. Submitting Order targeting DLT (fail-dlt-3)..."
+echo "5. Submitting Order targeting DLT (fail-dlt-3)..."
 curl -i -X POST "$BASE_URL/orders" \
   -H "Idempotency-Key: demo-dlt-key" \
   -H "Content-Type: application/json" \
   -d '{"OrderId": "fail-dlt-3", "Amount": 89.00}'
 
 echo ""
-echo "5. Testing Rate Limiting (burst of 120 requests)..."
+echo "6. Testing Rate Limiting (burst of 120 requests)..."
 echo "  Sending 120 rapid requests to verify 429 responses..."
 SUCCESS=0
 RATE_LIMITED=0
@@ -46,7 +46,7 @@ for i in $(seq 1 120); do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/orders" \
     -H "Idempotency-Key: rate-test-$i" \
     -H "Content-Type: application/json" \
-    -d '{"OrderId": "rate-test-'$i'", "Amount": 49.99}")
+    -d "{\"OrderId\": \"rate-test-$i\", \"Amount\": 49.99}")
   if [ "$CODE" = "202" ]; then
     SUCCESS=$((SUCCESS+1))
   elif [ "$CODE" = "429" ]; then
@@ -55,7 +55,7 @@ for i in $(seq 1 120); do
 done
 echo "  Results: $SUCCESS succeeded, $RATE_LIMITED rate-limited (429)"
 
-echo "6. Simulating Debezium restart..."
+echo "7. Simulating Debezium restart..."
 docker-compose restart debezium
 echo "  Waiting 20 seconds for connector recovery..."
 sleep 20
