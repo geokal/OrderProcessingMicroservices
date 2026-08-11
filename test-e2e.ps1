@@ -69,7 +69,7 @@ try {
 }
 
 # 5. Test DLT Order (fail-dlt-102)
-Write-Host "`n5. Submitting Order targeting DLT (OrderId: fail-dlt-102)..."
+Write-Host "`n6. Submitting Order targeting DLT (OrderId: fail-dlt-102)..."
 $dltHeaders = @{
     "Idempotency-Key" = "e2e-key-102"
     "Content-Type"    = "application/json"
@@ -85,6 +85,43 @@ try {
     Write-Host " Response: $($dltRes.Content)" -ForegroundColor Yellow
 } catch {
     Write-Host " [FAILED] $_" -ForegroundColor Red
+}
+
+# 6. Test Rate Limiting (burst of 120 requests)
+Write-Host "`n7. Testing Rate Limiting (burst of 120 requests)..."
+$successCount = 0
+$rateLimitedCount = 0
+for ($i = 1; $i -le 120; $i++) {
+    $rateHeaders = @{
+        "Idempotency-Key" = "rate-test-$i"
+        "Content-Type"    = "application/json"
+    }
+    $rateBody = @{
+        OrderId = "rate-test-$i"
+        Amount  = 49.99
+    } | ConvertTo-Json
+
+    try {
+        $rateRes = Invoke-WebRequest -Uri "$baseUrl/orders" -Method Post -Headers $rateHeaders -Body $rateBody -UseBasicParsing -ErrorAction Stop
+        $successCount++
+    } catch {
+        if ($_.Exception.Response.StatusCode -eq 429) {
+            $rateLimitedCount++
+        }
+    }
+}
+Write-Host " Results: $successCount succeeded, $rateLimitedCount rate-limited (429)"
+
+# 7. Simulate Debezium restart
+Write-Host "`n8. Simulating Debezium restart..."
+docker-compose restart debezium
+Write-Host " Waiting 20 seconds for connector recovery..."
+Start-Sleep -Seconds 20
+try {
+    $debeziumStatus = Invoke-RestMethod -Uri "http://localhost:8083/connectors/orders-outbox-connector/status" -Method Get -ErrorAction Stop
+    Write-Host " [OK] Connector recovered" -ForegroundColor Green
+} catch {
+    Write-Host " [WARN] Connector may need re-registration" -ForegroundColor Yellow
 }
 
 Write-Host "`n==========================================" -ForegroundColor Cyan

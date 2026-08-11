@@ -19,6 +19,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -26,6 +27,7 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    restart: unless-stopped
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -42,6 +44,7 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     depends_on:
       - zookeeper
+    restart: unless-stopped
 
   debezium:
     image: debezium/connect:2.5
@@ -62,6 +65,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
 
   debezium-init:
     image: curlimages/curl:latest
@@ -121,6 +125,7 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+    restart: unless-stopped
 
   payment-service:
     build:
@@ -135,6 +140,7 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+    restart: unless-stopped
 
   notification-service:
     build:
@@ -146,6 +152,7 @@ services:
     depends_on:
       kafka:
         condition: service_started
+    restart: unless-stopped
 
 volumes:
   postgres_data:

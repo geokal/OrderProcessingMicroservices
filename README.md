@@ -204,6 +204,41 @@ curl -i -X POST http://localhost:5000/orders \
 
 ---
 
+## Resilience Features
+
+This implementation includes production-grade resilience patterns suitable for high-throughput microservices:
+
+### 1. Transactional Outbox with PostgreSQL WAL Retention
+- **WAL Configuration**: PostgreSQL is configured with `wal_level=logical`, `max_wal_senders=10`, `wal_keep_size=2GB`, and `max_replication_slots=10`
+- **Purpose**: Ensures Debezium can recover from outages without missing events by retaining WAL logs
+- **Benefit**: No event loss during Debezium restarts or maintenance windows
+
+### 2. Idempotent Debezium Connector Registration
+- **Retry Logic**: The `debezium-init` container retries connector registration for up to 15 attempts (10s intervals)
+- **Recovery**: Automatically detects if connector already exists before re-registering
+- **Graceful Startup**: Waits for Debezium REST API with up to 30 retry attempts (5s intervals)
+
+### 3. API Rate Limiting
+- **Policy**: Fixed window limiter — 100 requests per minute per endpoint
+- **Response**: HTTP 429 (Too Many Requests) when rate limited
+- **Scope**: Applied to `POST /orders` endpoint via `RequireRateLimiting("fixed")`
+
+### 4. Graceful Shutdown
+- **Cancellation Tokens**: OrderService checks `CancellationToken.IsCancellationRequested` before database transactions
+- **Clean Rollback**: Failed transactions are rolled back to prevent partial writes
+- **Container Restart**: All services configured with `restart: unless-stopped`
+
+### 5. Health Checks & Monitoring
+- **OrderService**: `/health` endpoint for Kubernetes/container orchestration
+- **PostgreSQL**: `pg_isready` healthcheck
+- **Debezium**: HTTP probe healthcheck for REST API
+
+### 6. Persistent Storage
+- **PostgreSQL**: Data persisted in `postgres_data` volume
+- **Debezium**: Connect state persisted in `debezium_data` volume
+
+---
+
 ## 5. Live Execution Log Evidence
 
 ### Payment Worker Backoff & Settlement
