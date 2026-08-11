@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.RateLimiting;
 using System.Text.Json;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Dapper;
 using Npgsql;
 using Shared.Db;
@@ -13,6 +16,17 @@ var kafkaBootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "
 
 builder.Services.AddSingleton<IDbConnectionFactory>(new DbConnectionFactory(connectionString));
 builder.Services.AddHealthChecks();
+
+// Add rate limiting for order submissions
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter(policyName: "fixed", options =>
+    {
+        options.PermitLimit = 100;
+        options.Window = TimeSpan.FromMinutes(1);
+    });
+    options.RejectionStatusCode = 429;
+});
 
 var app = builder.Build();
 
@@ -66,7 +80,8 @@ using (var scope = app.Services.CreateScope())
 
 app.MapHealthChecks("/health");
 
-app.MapPost("/orders", async (HttpContext context, CreateOrderRequest request, IDbConnectionFactory dbFactory) =>
+app.MapPost("/orders", async (HttpContext context, CreateOrderRequest request, 
+    IDbConnectionFactory dbFactory, CancellationToken ct) =>
 {
     if (!context.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKeyValues) ||
         string.IsNullOrWhiteSpace(idempotencyKeyValues.ToString()))
@@ -105,6 +120,13 @@ app.MapPost("/orders", async (HttpContext context, CreateOrderRequest request, I
     }
 
     // 2. Transactional insert (Order + Outbox + IdempotencyKey)
+    
+    // Check for client disconnect/graceful shutdown
+    if (ct.IsCancellationRequested)
+    {
+        return Results.StatusCode(499); // Client closed request
+    }
+    
     using var transaction = connection.BeginTransaction();
     try
     {
@@ -170,7 +192,10 @@ app.MapPost("/orders", async (HttpContext context, CreateOrderRequest request, I
         transaction.Rollback();
         throw;
     }
-});
+})
+.RequireRateLimiting("fixed");
+
+app.UseRateLimiter();
 
 app.Run();
 
