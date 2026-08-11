@@ -57,22 +57,52 @@ services:
     depends_on:
       - kafka
       - postgres
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8083/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   debezium-init:
     image: curlimages/curl:latest
     container_name: debezium-init
     volumes:
       - ./debezium:/debezium
+      - debezium_data:/kafka/connect
     command: >
       sh -c "
-        echo 'Waiting for Debezium to start...';
-        while [ $$(curl -s -o /dev/null -w '%{http_code}' http://debezium:8083/connectors) -ne 200 ]; do
-          sleep 3;
+        echo '=== Debezium Connector Registration ===';
+        echo 'Phase 1: Wait for Debezium REST API...';
+        for i in $$(seq 1 30); do
+          if curl -sf http://debezium:8083/connectors > /dev/null 2>&1; then
+            echo 'Debezium REST API is ready';
+            break;
+          fi;
+          echo \"Attempt $$i/30: Debezium not ready, waiting 5s...\";
+          sleep 5;
         done;
-        echo 'Registering Debezium Postgres connector...';
-        curl -i -X POST -H 'Accept:application/json' -H 'Content-Type:application/json' http://debezium:8083/connectors/ -d @/debezium/connector.json;
-        echo 'Connector registration step finished.';
+        echo 'Phase 2: Check if connector already exists...';
+        if curl -sf http://debezium:8083/connectors/orders-outbox-connector | grep -q 'name'; then
+          echo 'Connector already registered, skipping';
+        else
+          echo 'Phase 3: Registering connector with retry...';
+          for i in $$(seq 1 15); do
+            RESPONSE=$$(curl -s -X POST -H 'Accept:application/json' -H 'Content-Type:application/json' http://debezium:8083/connectors/ -d @/debezium/connector.json);
+            if echo \"$RESPONSE\" | grep -q 'Already Exists'; then
+              echo 'Connector registered successfully';
+              break;
+            elif echo \"$RESPONSE\" | grep -q 'order.created'; then
+              echo 'Connector registered successfully';
+              break;
+            else
+              echo \"Attempt $$i/15 failed: $$RESPONSE, retrying in 10s...\";
+              sleep 10;
+            fi;
+          done;
+        fi;
+        echo '=== Registration complete ===';
       "
+    restart: "no"
     depends_on:
       - debezium
 
@@ -119,3 +149,4 @@ services:
 
 volumes:
   postgres_data:
+  debezium_data:
